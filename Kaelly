@@ -1,0 +1,246 @@
+{
+  "name": "College Course Help Desk AI Auto-Responder",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "college-helpdesk",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c5835e12-f7df-4b4a-ba84-332492687537",
+      "name": "Webhook - Incoming Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "college-helpdesk-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b=$input.first().json.body ?? $input.first().json;\nconst message=String(b.message ?? '').trim();\nif(!message) throw new Error('Send JSON with sender, subject, and message.');\nconst knowledgeBase=[\n{id:'KB01',topic:'Assignments',keywords:['assignment','homework','submit'],answer:'Assignments are submitted through the course portal.'},\n{id:'KB02',topic:'Due dates',keywords:['due date','deadline','calendar'],answer:'Due dates are listed in the course calendar and assignment page.'},\n{id:'KB03',topic:'Grades',keywords:['grade','score','points'],answer:'Grades can be checked in the Grades section of the course portal.'},\n{id:'KB04',topic:'Late work',keywords:['late','missed','past due'],answer:'Contact the instructor about late work and applicable course policy.'},\n{id:'KB05',topic:'Extensions',keywords:['extension','extra time','extend'],answer:'Send extension requests directly to the instructor.'},\n{id:'KB06',topic:'Course materials',keywords:['slides','notes','materials','module'],answer:'Course materials are available in the relevant course modules.'},\n{id:'KB07',topic:'Attendance',keywords:['attendance','absent','absence'],answer:'Attendance requirements are described in the course syllabus.'},\n{id:'KB08',topic:'Office hours',keywords:['office hours','appointment'],answer:'Check the syllabus or course page for office hours.'},\n{id:'KB09',topic:'Login problems',keywords:['login','password','sign in'],answer:'Try the password-reset option or contact campus IT support.'},\n{id:'KB10',topic:'Technical issues',keywords:['error','portal not working','upload failed','technical'],answer:'Contact technical support and inform your instructor if a submission is affected.'}\n];\nconst sender=String(b.sender ?? 'unknown'), subject=String(b.subject ?? b.topic ?? 'No subject');\nconst text=(subject+' '+message).toLowerCase();\nconst matchedKnowledge=knowledgeBase.filter(x=>x.keywords.some(k=>text.includes(k)));\nreturn [{json:{sender,subject,message,receivedAt:new Date().toISOString(),knowledgeBase,matchedKnowledge}}];"
+      },
+      "id": "4f52c853-9168-4c4c-bf8f-917946526e4d",
+      "name": "Prepare Message + Search Knowledge Base",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Classify the college help desk message. Return JSON only: category, confidence (0-1 number), reasoning. category must be exactly one of Course question, Grade inquiry, Deadline extension, Technical issue, General inquiry."
+            },
+            {
+              "content": "=Subject: {{ $json.subject }}\nMessage: {{ $json.message }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          },
+          "temperature": 0.1
+        }
+      },
+      "id": "131c037a-acb4-4353-8c13-872ffc829297",
+      "name": "OpenAI - Classify Message",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        496,
+        0
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const c=$('Prepare Message + Search Knowledge Base').first().json;\nlet v=$input.first().json.output?.[0]?.content?.[0]?.text ?? {}; if(typeof v==='string'){try{v=JSON.parse(v)}catch(e){v={}}}\nconst allowed=['Course question','Grade inquiry','Deadline extension','Technical issue','General inquiry'];\nif(!allowed.includes(v.category)) v.category='General inquiry';\nreturn [{json:{...c,classification:{category:v.category,confidence:Math.max(0,Math.min(1,Number(v.confidence)||0)),reasoning:String(v.reasoning??'')}}}];"
+      },
+      "id": "09932f88-63e1-4366-8e7f-2ce3e7be8e7d",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a professional college course help desk assistant. Use only supplied knowledge entries. Do not invent policies, grades, or deadlines. If no entry answers the question, say so and direct the student to the instructor or campus support. Be polite and include a next step. Sign off as \"College Course Help Desk\" and never use bracketed placeholders such as [Your Name]."
+            },
+            {
+              "content": "=Student: {{ $json.sender }}\nSubject: {{ $json.subject }}\nMessage: {{ $json.message }}\nClassification: {{ JSON.stringify($json.classification) }}\nKnowledge entries: {{ JSON.stringify($json.matchedKnowledge) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "id": "4cfd6402-3476-4207-a3e5-771ce06a2314",
+      "name": "OpenAI - Generate Reply",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1024,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const c=$('Parse Classification').first().json;\nconst reply=$input.first().json.output?.[0]?.content?.[0]?.text ?? 'Please contact your instructor for help.';\nconst log={timestamp:new Date().toISOString(),sender:c.sender,subject:c.subject,originalMessage:c.message,category:c.classification.category,confidence:c.classification.confidence,reasoning:c.classification.reasoning,knowledgeBaseEntriesMatched:c.matchedKnowledge.map(x=>({id:x.id,topic:x.topic})),generatedResponse:reply,deliveryStatus:'returned_by_webhook'};\nreturn [{json:{reply,classification:c.classification,matchedKnowledge:log.knowledgeBaseEntriesMatched,log}}];"
+      },
+      "id": "850867ba-de26-4541-8a8a-bc8e25bf3d53",
+      "name": "Build Reply + Interaction Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "32fb09f8-a4b6-4d67-b6b0-442d989d6a5a",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1536,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Incoming Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare Message + Search Knowledge Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Message + Search Knowledge Base": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Classify Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Classify Message": {
+      "main": [
+        [
+          {
+            "node": "Parse Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Classification": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Generate Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Generate Reply": {
+      "main": [
+        [
+          {
+            "node": "Build Reply + Interaction Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reply + Interaction Log": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "a0f17ff7-72f9-4757-8243-1e3ac2b30ebc",
+  "meta": {
+    "instanceId": "5b365debb5a327eab0b9de5bed016603ff3967d8e47f56eb8ca25e27043ce319"
+  },
+  "nodeGroups": [],
+  "id": "GdF6OwDU8gY6GaqE",
+  "tags": []
+}
